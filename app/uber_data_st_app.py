@@ -1683,7 +1683,7 @@ elif st.session_state.page == "analysis":
             if zones.empty:
                 map_fig = None
             else:
-                map_fig = px.scatter_mapbox(
+                map_fig = px.scatter_map(
                     zones,
                     lat="lat", lon="lon",
                     size="rides", size_max=15,
@@ -1695,7 +1695,7 @@ elif st.session_state.page == "analysis":
                     title="Average VTAT by pickup zone (bubble size = rides)"
                 )
                 map_fig.update_layout(
-                    mapbox_style="open-street-map",
+                    map_style="open-street-map",
                     margin=dict(l=10, r=10, t=48, b=10)
                 )
         else:
