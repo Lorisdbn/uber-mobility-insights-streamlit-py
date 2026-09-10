@@ -15,5 +15,7 @@ jobs:
       - name: Ping Streamlit app
         run: |
           curl --fail --location --retry 3 --retry-delay 10 --max-time 90 \
+            --cookie-jar "$RUNNER_TEMP/streamlit-cookies.txt" \
+            --cookie "$RUNNER_TEMP/streamlit-cookies.txt" \
             --user-agent "GitHub-Actions-Streamlit-Keepalive" \
             "https://uber-data.streamlit.app/"
