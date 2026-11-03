@@ -60,16 +60,20 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout default branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          fetch-depth: 1
-
+      # Plain git instead of actions/checkout: no Node runtime and no action
+      # version to bump, so this job never needs maintenance for deprecations.
       - name: Commit timestamp if repo inactive for 30+ days
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}.git
         run: |
+          b64=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$b64"
+          auth="AUTHORIZATION: basic $b64"
+          git -c http.extraheader="$auth" clone --quiet --depth 1 --branch "$DEFAULT_BRANCH" "$REPO_URL" repo
+          cd repo
+
           last_commit=$(git log -1 --format=%ct)
           now=$(date -u +%s)
           age_days=$(( (now - last_commit) / 86400 ))
@@ -77,6 +81,8 @@ jobs:
 
           if [ "$age_days" -lt 30 ]; then
             echo "Recent activity found, nothing to do."
+            # Still validate push credentials so a broken token surfaces early.
+            git -c http.extraheader="$auth" push --dry-run origin "HEAD:${DEFAULT_BRANCH}"
             exit 0
           fi
 
@@ -85,4 +91,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .github/keepalive
           git commit -m "chore: keepalive timestamp $(cat .github/keepalive)"
-          git push origin "HEAD:${DEFAULT_BRANCH}"
+          git -c http.extraheader="$auth" push origin "HEAD:${DEFAULT_BRANCH}"
