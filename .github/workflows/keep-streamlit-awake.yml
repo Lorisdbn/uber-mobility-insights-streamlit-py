@@ -1,21 +1,88 @@
 name: Keep Streamlit awake
 
+# Each job runs only on its own cron (matched via github.event.schedule).
+# A manual run (workflow_dispatch) runs all three jobs.
+# Keep the cron strings below identical to the ones in the `if:` conditions.
 on:
   schedule:
-    - cron: "0 */10 * * *"
+    - cron: "17 */10 * * *"   # ping: every 10 hours
+    - cron: "43 6 * * 1"      # keep-workflow-enabled: every Monday
+    - cron: "29 3 1 * *"      # keepalive-commit: 1st of each month
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
+
+concurrency:
+  group: keep-streamlit-awake-${{ github.event.schedule || 'manual' }}
+  cancel-in-progress: false
+
+env:
+  APP_URL: "https://uber-data.streamlit.app/"
+  WORKFLOW_FILE: "keep-streamlit-awake.yml"
 
 jobs:
   ping:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 */10 * * *'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - name: Ping Streamlit app
         run: |
           curl --fail --location --retry 3 --retry-delay 10 --max-time 90 \
+            --silent --show-error --output /dev/null \
+            --write-out "HTTP %{http_code} after %{num_redirects} redirect(s) -> %{url_effective}\n" \
             --cookie-jar "$RUNNER_TEMP/streamlit-cookies.txt" \
             --cookie "$RUNNER_TEMP/streamlit-cookies.txt" \
             --user-agent "GitHub-Actions-Streamlit-Keepalive" \
-            "https://uber-data.streamlit.app/"
+            "$APP_URL"
+
+  keep-workflow-enabled:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '43 6 * * 1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Re-enable this workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method PUT \
+            "repos/${{ github.repository }}/actions/workflows/${WORKFLOW_FILE}/enable"
+          echo "Workflow ${WORKFLOW_FILE} enabled."
+
+  keepalive-commit:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '29 3 1 * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+
+      - name: Commit timestamp if repo inactive for 30+ days
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          last_commit=$(git log -1 --format=%ct)
+          now=$(date -u +%s)
+          age_days=$(( (now - last_commit) / 86400 ))
+          echo "Last commit on ${DEFAULT_BRANCH} is ${age_days} day(s) old."
+
+          if [ "$age_days" -lt 30 ]; then
+            echo "Recent activity found, nothing to do."
+            exit 0
+          fi
+
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .github/keepalive
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/keepalive
+          git commit -m "chore: keepalive timestamp $(cat .github/keepalive)"
+          git push origin "HEAD:${DEFAULT_BRANCH}"
